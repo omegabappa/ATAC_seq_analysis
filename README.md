@@ -29,23 +29,3 @@ Install the following tools before running the pipeline:
 ## ⚙️ Usage
 ```bash
 bash ATAC_seq.sh <INPUT_DIR> <OUTPUT_DIR> <BOWTIE2_INDEX>
-
-🧪 Next Steps
-
-Once you have deduplicated BAMs, you can:
-
-Call peaks using MACS2
-
-Generate coverage tracks with deepTools
-
-Perform differential accessibility analysis (DESeq2, edgeR)
-
-Visualize in genome browsers (IGV, UCSC, pyGenomeTracks)
-
-👨‍🔬 Notes
-
-Modify parameters (insert size, threads, filters) as per your dataset.
-
-Ensure you provide the correct reference genome index.
-
-Script is designed for paired-end ATAC-seq data.

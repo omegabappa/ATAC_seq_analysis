@@ -1,92 +1,114 @@
+#!/bin/bash
+# ==========================================================
+# Generalized ATAC-seq Processing Pipeline
+# Author: Your Name
+# Description:
+#   This script performs a standard ATAC-seq data processing 
+#   workflow starting from raw FASTQ files.
+#   Steps include: QC, trimming, alignment, filtering, deduplication.
+#
+# Requirements:
+#   - fastqc
+#   - fastp
+#   - bowtie2
+#   - samtools
+#   - picard
+#
+# Usage:
+#   bash ATAC_seq.sh <INPUT_DIR> <OUTPUT_DIR> <BOWTIE2_INDEX>
+# Example:
+#   bash ATAC_seq.sh ./raw_data ./results /path/to/hg38/index
+# ==========================================================
 
+set -euo pipefail
 
-mkdir -p fastqc && fastqc -t $(nproc) G2025_9/*_R[12]_001.fastq.gz -d fastqc -o fastqc
+# ---------------------------
+# Input arguments
+# ---------------------------
+INPUT_DIR=$1        # Directory containing raw FASTQ files
+OUTPUT_DIR=$2       # Directory where results will be stored
+BOWTIE2_INDEX=$3    # Path to Bowtie2 genome index
 
+THREADS=$(nproc)    # Use all available cores
 
-mkdir -p trimmed && \
-ls G2025_9/*_R1_001.fastq.gz | \
-xargs -n1 -P $(( $(nproc)/16 )) -I{} bash -c '
-  s=$(basename {} _R1_001.fastq.gz)
+# ---------------------------
+# Step 1: Initial QC (FastQC)
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/fastqc
+fastqc -t ${THREADS} ${INPUT_DIR}/*_R[12]_001.fastq.gz -o ${OUTPUT_DIR}/fastqc
+
+# ---------------------------
+# Step 2: Adapter trimming (fastp)
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/trimmed
+for f in ${INPUT_DIR}/*_R1_001.fastq.gz; do
+  sample=$(basename $f _R1_001.fastq.gz)
   fastp -w 16 \
-        -i "{}" \
-        -I "G2025_9/${s}_R2_001.fastq.gz" \
-        -o "trimmed/${s}_R1.trimmed.fastq.gz" \
-        -O "trimmed/${s}_R2.trimmed.fastq.gz" \
+        -i ${INPUT_DIR}/${sample}_R1_001.fastq.gz \
+        -I ${INPUT_DIR}/${sample}_R2_001.fastq.gz \
+        -o ${OUTPUT_DIR}/trimmed/${sample}_R1.trimmed.fastq.gz \
+        -O ${OUTPUT_DIR}/trimmed/${sample}_R2.trimmed.fastq.gz \
         --detect_adapter_for_pe \
-        -j "trimmed/${s}.fastp.json" \
-        -h "trimmed/${s}.fastp.html"
-'
+        -j ${OUTPUT_DIR}/trimmed/${sample}.fastp.json \
+        -h ${OUTPUT_DIR}/trimmed/${sample}.fastp.html
+done
 
-mkdir -p fastqc_trimmed && fastqc -t $(nproc) trimmed/*_R[12].trimmed.fastq.gz -d fastqc -o fastqc_trimmed
+# ---------------------------
+# Step 3: QC after trimming
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/fastqc_trimmed
+fastqc -t ${THREADS} ${OUTPUT_DIR}/trimmed/*_R[12].trimmed.fastq.gz -o ${OUTPUT_DIR}/fastqc_trimmed
 
-
-mkdir -p aligned && \
-for f in trimmed/*_R1.trimmed.fastq.gz; do \
-  s=$(basename "$f" _R1.trimmed.fastq.gz); \
-  bowtie2 -p $(nproc) \
+# ---------------------------
+# Step 4: Alignment (Bowtie2)
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/aligned
+for f in ${OUTPUT_DIR}/trimmed/*_R1.trimmed.fastq.gz; do
+  sample=$(basename $f _R1.trimmed.fastq.gz)
+  bowtie2 -p ${THREADS} \
     --local --very-sensitive --no-mixed --no-discordant -I 25 -X 700 \
-    -x /data/shared_genomics_data/ref_genomes/human/hg38/bowtie2/hg38 \
-    -1 "$f" \
-    -2 "trimmed/${s}_R2.trimmed.fastq.gz" \
-  | samtools view -@ $(nproc) -bS - > "aligned/${s}.bam"; \
+    -x ${BOWTIE2_INDEX} \
+    -1 $f \
+    -2 ${OUTPUT_DIR}/trimmed/${sample}_R2.trimmed.fastq.gz \
+  | samtools view -@ ${THREADS} -bS - > ${OUTPUT_DIR}/aligned/${sample}.bam
 done
 
-
-
-##sort
-mkdir -p sorted && \
-for f in aligned/*.bam; do \
-  s=$(basename "$f" .bam); \
-  samtools sort -@ $(nproc) -o sorted/${s}_sorted.bam "$f" && \
-  samtools index -@ $(nproc) sorted/${s}_sorted.bam; \
+# ---------------------------
+# Step 5: Sort & index BAM
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/sorted
+for f in ${OUTPUT_DIR}/aligned/*.bam; do
+  sample=$(basename $f .bam)
+  samtools sort -@ ${THREADS} -o ${OUTPUT_DIR}/sorted/${sample}_sorted.bam $f
+  samtools index -@ ${THREADS} ${OUTPUT_DIR}/sorted/${sample}_sorted.bam
 done
 
-
-
-##check chrM
-mkdir -p idxstats && \
-ls sorted/*_sorted.bam | xargs -P $(nproc) -I {} bash -c '
-  s=$(basename {} _sorted.bam)
-  samtools idxstats {} > idxstats/${s}_sorted.idxstats
-  grep "chrM" idxstats/${s}_sorted.idxstats > idxstats/${s}_sorted.chrM.txt
-'
-
-
-##remove chrM
-mkdir -p rmChrM && \
-for f in sorted/*_sorted.bam; do \
-  s=$(basename "$f" _sorted.bam); \
-  echo "=== Processing $s ==="; \
-  samtools view -h "$f" | grep -v chrM | \
-    samtools sort -@ $(nproc) -O bam -T rmChrM/${s}_tmp -o rmChrM/${s}.rmChrM.bam && \
-  echo "Created rmChrM/${s}.rmChrM.bam"; \
+# ---------------------------
+# Step 6: Mitochondrial reads check & removal
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/rmChrM
+for f in ${OUTPUT_DIR}/sorted/*_sorted.bam; do
+  sample=$(basename $f _sorted.bam)
+  echo "Processing $sample..."
+  samtools idxstats $f > ${OUTPUT_DIR}/rmChrM/${sample}.idxstats
+  grep "chrM" ${OUTPUT_DIR}/rmChrM/${sample}.idxstats > ${OUTPUT_DIR}/rmChrM/${sample}.chrM.txt
+  samtools view -h $f | grep -v chrM | \
+    samtools sort -@ ${THREADS} -O bam -T ${OUTPUT_DIR}/rmChrM/${sample}_tmp -o ${OUTPUT_DIR}/rmChrM/${sample}.rmChrM.bam
 done
 
-
-
-
-##dedup
-
-mkdir -p dedup && \
-for f in sorted/*_sorted.bam; do \
-  s=$(basename "$f" _sorted.bam); \
-  nohup picard AddOrReplaceReadGroups \
-    I="$f" \
-    O="dedup/${s}_sorted_rg.bam" \
-    RGID="$s" \
-    RGLB="lib_${s}" \
-    RGPL="illumina" \
-    RGPU="unit_${s}" \
-    RGSM="${s}_sample" \
-  > "dedup/${s}_redup.log" 2>&1 & \
+# ---------------------------
+# Step 7: Deduplication (Picard)
+# ---------------------------
+mkdir -p ${OUTPUT_DIR}/dedup
+for f in ${OUTPUT_DIR}/rmChrM/*.bam; do
+  sample=$(basename $f .bam)
+  picard MarkDuplicates \
+    I=$f \
+    O=${OUTPUT_DIR}/dedup/${sample}_dedup.bam \
+    M=${OUTPUT_DIR}/dedup/${sample}_dedup_metrics.txt \
+    REMOVE_DUPLICATES=true \
+    VALIDATION_STRINGENCY=LENIENT
+  samtools index ${OUTPUT_DIR}/dedup/${sample}_dedup.bam
 done
 
-
-
-
-
-
-
-
-
-
+echo "=== ATAC-seq pipeline completed successfully ==="

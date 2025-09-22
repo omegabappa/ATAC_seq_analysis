@@ -1,4 +1,31 @@
-# ATAC_seq_analysis
-This guide provides a detailed overview of ATAC-seq analysis, specifically tailored for members of the Takaku Lab. While many general resources exist for learning and analyzing ATAC-seq data, this document is designed to serve the specific needs of our lab, which routinely generates large volumes of such data.
+# ATAC-seq Analysis Pipeline
 
-All tools, settings, and workflows described here have been tested and optimized for use on the Takaku Lab servers — Chromatin and Sakura.
+This repository contains a **generalized ATAC-seq processing pipeline**.  
+It is designed to take raw FASTQ files and produce **cleaned, aligned, deduplicated BAM files** ready for downstream peak calling and analysis.
+
+---
+
+## 🚀 Workflow Overview
+1. **Quality Control (FastQC)** – Assess raw FASTQ quality.
+2. **Adapter Trimming (fastp)** – Remove adapters and low-quality reads.
+3. **QC after trimming** – Verify trimming effectiveness.
+4. **Alignment (Bowtie2)** – Map reads to a reference genome.
+5. **Sorting & Indexing (Samtools)** – Prepare BAM for downstream steps.
+6. **Mitochondrial Read Removal** – Filter out chrM reads.
+7. **Deduplication (Picard)** – Remove PCR duplicates.
+
+---
+
+## 🔧 Requirements
+Install the following tools before running the pipeline:
+- [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/)
+- [fastp](https://github.com/OpenGene/fastp)
+- [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/)
+- [Samtools](http://www.htslib.org/)
+- [Picard](https://broadinstitute.github.io/picard/)
+
+---
+
+## ⚙️ Usage
+```bash
+bash ATAC_seq.sh <INPUT_DIR> <OUTPUT_DIR> <BOWTIE2_INDEX>
